@@ -9,7 +9,7 @@ class WeiredTransformer(nn.Module):
     def __init__(self,
                  dict_size, n_topics,
                  bos_idx, pad_idx,
-                 n_blocks, n_steps, n_head, d_model,
+                 n_blocks, n_steps, n_head, d_model, k,
                  dropout):
         super(WeiredTransformer, self).__init__()
         # vocab sizes
@@ -17,6 +17,12 @@ class WeiredTransformer(nn.Module):
         # tokens
         self.bos_idx = bos_idx
         self.pad_idx = pad_idx
+        # global content and global positional biases
+        d_v = (d_model // n_head) * k
+        self.content_bias = nn.Parameter(torch.Tensor(n_head, 1, d_v))
+        torch.nn.init.xavier_normal_(self.content_bias)
+        self.position_bias = nn.Parameter(torch.Tensor(n_head, 1, d_v))
+        torch.nn.init.xavier_normal_(self.position_bias)
         # layers
         self.vocab_embedding = nn.Embedding(
             dict_size + 1,
@@ -27,8 +33,8 @@ class WeiredTransformer(nn.Module):
 
         self.n_blocks = n_blocks
         self.blocks = nn.ModuleList([
-                SuperBlock(n_head, d_model, n_steps, n_topics, dropout)
-                for _ in range(n_blocks)
+            SuperBlock(n_head, d_model, k, n_steps, n_topics, dropout)
+            for _ in range(n_blocks)
         ])
         self.conditioning = nn.Linear(n_topics, d_model)
         self.last_layer = nn.Linear(d_model, dict_size + 1, bias=False)
@@ -59,6 +65,7 @@ class WeiredTransformer(nn.Module):
         for block, mem in zip(self.blocks, memory):
             hidden, new_mem = block(
                 hidden, condition, mem,
+                self.content_bias, self.position_bias,
                 # non_pad_mask, None
                 non_pad_mask, self_attn_mask
             )
@@ -73,11 +80,16 @@ class WeiredTransformer(nn.Module):
 
 
 if __name__ == '__main__':
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
     t = WeiredTransformer(
-        100, 12,
-        0, 100,
-        2, 1, 8, 768, 0.0
+        20_000, 12,
+        0, 10_000,
+        2, 2, 8, 128, 2,
+        0.1
     )
+    print(count_parameters(t))
     opt = torch.optim.SGD(t.parameters(), 1e-3)
     criterion = torch.nn.NLLLoss()
     log_sm = torch.nn.LogSoftmax(dim=-1)
@@ -87,14 +99,17 @@ if __name__ == '__main__':
     tgt = 1 + torch.tensor([
         range(100)
     ], dtype=torch.long)
-    for _ in range(100):
+    for _ in range(5000):
         c = None
         m = None
         for j in range(2):
-            r, m = t(inp[:, 5*j:5*(j+1)], c, m)
+            r, m = t(inp[:, 5*j:5*(j+1)], c, None)
             lsm = log_sm(r)
 
-            loss = criterion(lsm.view(5, -1), tgt[:, 5*j:5*(j+1)].view(5))
+            loss = criterion(
+                lsm.view(5, -1),
+                tgt[:, 5*j:5*(j+1)].view(5)
+            )
             print(loss.item())
             loss.backward()
             opt.step()

@@ -20,10 +20,6 @@ class Attention(nn.Module):
         self.relative_projector = nn.Linear(d_model, d_model * k, bias=False)
         self.context_projector = nn.Linear(d_model * k, d_model, bias=False)
 
-        # biases from (C) and (D)
-        self.u = nn.Parameter(torch.Tensor(self.d_v))
-        self.v = nn.Parameter(torch.Tensor(self.d_v))
-
         # attention
         self.attn_dropout = nn.Dropout(dropout)
         self.softmax = nn.Softmax(dim=2)
@@ -32,12 +28,20 @@ class Attention(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(d_model)
 
-    def _attn(self, query, key, value, relative, mask):
-        ac = torch.bmm(query + self.u, key.transpose(1, 2))
-        bd = torch.bmm(query + self.v, relative.transpose(1, 2))
+    def _attn(self,
+              query, key, value,
+              content_bias, position_bias,
+              relative, mask):
+        # return query
+        ac = torch.bmm(query + content_bias, key.transpose(1, 2))
+        # ac = torch.bmm(query, key.transpose(1, 2))
+        bd = torch.bmm(query + position_bias, relative.transpose(1, 2))
+
+        bd = self.rel_shift(bd)
         attn_logits = ac + bd
         attn_logits = attn_logits / math.sqrt(key.size(-1))
         # attn_logits: [b*h, q_t, k_t]
+
         if mask is not None:
             kv_time = mask.size()[-1]
             temp = attn_logits[:, :, -kv_time:].masked_fill(mask, -float('inf'))
@@ -55,7 +59,20 @@ class Attention(nn.Module):
         temp = temp.view(sizes[2] * sizes[0], sizes[1], sizes[3])  # [b * h, t, f]
         return temp
 
-    def forward(self, query, key_value, relative, mask=None):
+    @staticmethod
+    def rel_shift(q_r):
+        z = torch.zeros_like(q_r)
+        batch, q_time, k_time = q_r.size()
+        r_off = k_time - q_time  # right offset
+        for i in range(q_time):
+            roi = q_r[:, i, -(r_off + i + 1):]
+            q_r[:, i, :r_off + i + 1] = roi
+        return z
+
+    def forward(self,
+                query, key_value, relative,
+                content_bias, position_bias,
+                mask=None):
         # {query, key, value} in form [batch, time, features]
         residual = query
         query_batch, query_time, _ = query.size()  # query_batch == kv_batch
@@ -70,7 +87,11 @@ class Attention(nn.Module):
 
         if mask is not None:
             mask = mask.repeat(self.n_head, 1, 1)
-        context = self._attn(query, key, value, relative, mask)
+        context = self._attn(
+            query, key, value,
+            content_bias, position_bias,
+            relative, mask
+        )
         context = context.view(self.n_head, kv_batch, query_time, self.d_v)
         context = context.permute(1, 2, 0, 3).contiguous()  # [b, q_time, h, f]
         context = context.view(kv_batch, query_time, -1)  # [b, q_time, h * f]
