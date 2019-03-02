@@ -28,7 +28,7 @@ class Block(nn.Module):
             dtype=torch.float32,
             device=key_value.device
         )
-        pos = self.positional_encoding(pos)
+        pos = self.positional_encoding(pos, layer_input.size(0))
         output = self.attention(
             query, key_value, pos,
             content_bias, position_bias,

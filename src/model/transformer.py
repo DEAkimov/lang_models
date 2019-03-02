@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
-from src.models.UT.modules.block import SuperBlock
-from src.models.UT.modules.pos import PositionalEncoding
-from src.models.UT.modules.masks import get_non_pad_mask, get_attn_key_pad_mask, get_subsequent_mask
+
+from model.modules.block import SuperBlock
+from model.modules.pos import PositionalEncoding
+from model.modules.masks import get_non_pad_mask, get_attn_key_pad_mask, get_subsequent_mask
 
 
 class WeiredTransformer(nn.Module):
@@ -19,9 +20,9 @@ class WeiredTransformer(nn.Module):
         self.pad_idx = pad_idx
         # global content and global positional biases
         d_v = (d_model // n_head) * k
-        self.content_bias = nn.Parameter(torch.Tensor(n_head, 1, d_v))
+        self.content_bias = nn.Parameter(torch.Tensor(n_head, 1, 1, d_v))
         torch.nn.init.xavier_normal_(self.content_bias)
-        self.position_bias = nn.Parameter(torch.Tensor(n_head, 1, d_v))
+        self.position_bias = nn.Parameter(torch.Tensor(n_head, 1, 1, d_v))
         torch.nn.init.xavier_normal_(self.position_bias)
         # layers
         self.vocab_embedding = nn.Embedding(
@@ -80,35 +81,37 @@ class WeiredTransformer(nn.Module):
 
 
 if __name__ == '__main__':
+    # just test if model works
     def count_parameters(model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     t = WeiredTransformer(
         20_000, 12,
         0, 10_000,
-        2, 2, 8, 128, 2,
+        2, 2, 2, 32, 2,
         0.1
     )
     print(count_parameters(t))
-    opt = torch.optim.SGD(t.parameters(), 1e-3)
+    opt = torch.optim.SGD(t.parameters(), 1e-2)
     criterion = torch.nn.NLLLoss()
     log_sm = torch.nn.LogSoftmax(dim=-1)
     inp = torch.tensor([
         range(100)
-    ], dtype=torch.long)
-    tgt = 1 + torch.tensor([
-        range(100)
-    ], dtype=torch.long)
-    for _ in range(5000):
+    ] * 3, dtype=torch.long)
+
+    for _ in range(1000):
         c = None
         m = None
-        for j in range(2):
-            r, m = t(inp[:, 5*j:5*(j+1)], c, None)
+        for j in range(10):
+            inp_t = inp[:, j * 5:(j + 1) * 5]
+            tgt_t = inp[:, j * 5 + 1:(j + 1) * 5 + 1]
+
+            r, m = t(inp_t, c, m)
             lsm = log_sm(r)
 
             loss = criterion(
-                lsm.view(5, -1),
-                tgt[:, 5*j:5*(j+1)].view(5)
+                lsm.contiguous().view(3 * 5, -1),
+                tgt_t.contiguous().view(-1)
             )
             print(loss.item())
             loss.backward()

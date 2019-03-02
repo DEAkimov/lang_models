@@ -33,40 +33,45 @@ class Attention(nn.Module):
               content_bias, position_bias,
               relative, mask):
         # return query
-        ac = torch.bmm(query + content_bias, key.transpose(1, 2))
+        # ac = torch.bmm(query + content_bias, key.transpose(1, 2))
+        ac = torch.matmul(query + content_bias, key.transpose(2, 3))
         # ac = torch.bmm(query, key.transpose(1, 2))
-        bd = torch.bmm(query + position_bias, relative.transpose(1, 2))
+        bd = torch.matmul(query + position_bias, relative.transpose(2, 3))
 
         bd = self.rel_shift(bd)
         attn_logits = ac + bd
         attn_logits = attn_logits / math.sqrt(key.size(-1))
-        # attn_logits: [b*h, q_t, k_t]
+        # attn_logits: [h*b, q_t, k_t]
+        head, batch, q_t, k_t = attn_logits.size()
+        attn_logits = attn_logits.view(head*batch, q_t, k_t)
 
         if mask is not None:
             kv_time = mask.size()[-1]
             temp = attn_logits[:, :, -kv_time:].masked_fill(mask, -float('inf'))
             attn_logits[:, :, -kv_time:] = temp
 
+        attn_logits = attn_logits.view(head, batch, q_t, k_t)
+
         attn_weights = self.softmax(attn_logits)
         attn_weights = self.attn_dropout(attn_weights)
-        context = torch.bmm(attn_weights, value)
+        context = torch.matmul(attn_weights, value)
         return context
 
     @staticmethod
     def project_view(tensor, layer, sizes):
         temp = layer(tensor).view(*sizes)  # [b, t, heads, features]
         temp = temp.permute(2, 0, 1, 3).contiguous()  # [heads, b, t, f]
-        temp = temp.view(sizes[2] * sizes[0], sizes[1], sizes[3])  # [b * h, t, f]
+        temp = temp.view(sizes[2], sizes[0], sizes[1], sizes[3])  # [h * b, t, f]
         return temp
 
     @staticmethod
     def rel_shift(q_r):
         z = torch.zeros_like(q_r)
-        batch, q_time, k_time = q_r.size()
+        _, _, q_time, k_time = q_r.size()
         r_off = k_time - q_time  # right offset
         for i in range(q_time):
-            roi = q_r[:, i, -(r_off + i + 1):]
-            q_r[:, i, :r_off + i + 1] = roi
+            roi = q_r[:, :, i, -(r_off + i + 1):]
+            q_r[:, :, i, :r_off + i + 1] = roi
         return z
 
     def forward(self,
