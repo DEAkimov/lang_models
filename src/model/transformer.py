@@ -1,18 +1,18 @@
 import torch
 import torch.nn as nn
 
-from model.modules.block import SuperBlock
+from model.modules.block import Block
 from model.modules.pos import PositionalEncoding
 from model.modules.masks import get_non_pad_mask, get_attn_key_pad_mask, get_subsequent_mask
 
 
-class WeiredTransformer(nn.Module):
+class TransformerXL(nn.Module):
     def __init__(self,
                  dict_size, n_topics,
                  bos_idx, pad_idx,
                  n_blocks, n_steps, n_head, d_model, k,
                  dropout):
-        super(WeiredTransformer, self).__init__()
+        super(TransformerXL, self).__init__()
         # vocab sizes
         self.base_vocab = dict_size
         # tokens
@@ -30,7 +30,7 @@ class WeiredTransformer(nn.Module):
             d_model,
             padding_idx=pad_idx
         )
-        self.pos_embedding = PositionalEncoding(d_model)
+        torch.nn.init.normal_(self.vocab_embedding.weight, std=0.2)
 
         self.n_blocks = n_blocks
         self.blocks = nn.ModuleList([
@@ -77,8 +77,6 @@ class WeiredTransformer(nn.Module):
         logits = self.last_layer(hidden) * self.logit_scale
         return logits, self.detach_mem(new_memory)
 
-    # TODO: incremental forward
-
 
 if __name__ == '__main__':
     # just test if model works
@@ -86,20 +84,20 @@ if __name__ == '__main__':
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     t = WeiredTransformer(
-        20_000, 12,
+        10_000, 12,
         0, 10_000,
-        2, 2, 2, 32, 2,
-        0.1
+        1, 8, 14, 896, 2,
+        0.0
     )
     print(count_parameters(t))
-    opt = torch.optim.SGD(t.parameters(), 1e-2)
+    opt = torch.optim.SGD(t.parameters(), 1e-2, momentum=0.9)
     criterion = torch.nn.NLLLoss()
     log_sm = torch.nn.LogSoftmax(dim=-1)
     inp = torch.tensor([
         range(100)
     ] * 3, dtype=torch.long)
 
-    for _ in range(1000):
+    for _ in range(100):
         c = None
         m = None
         for j in range(10):

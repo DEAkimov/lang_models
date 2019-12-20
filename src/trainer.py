@@ -66,8 +66,8 @@ class Trainer:
                 log_sm.contiguous().view(-1, self.dict_size),
                 model_input[:, 1:].contiguous().view(-1)
             )
-            mean_grad_norm += self.optimizer_step(loss)
             mean_step_loss += loss.item()
+            mean_grad_norm += self.optimizer_step(loss)
         return mean_step_loss / num_steps, mean_grad_norm / num_steps
 
     def train_step(self, batch):
